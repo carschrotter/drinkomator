@@ -1,0 +1,7 @@
+{
+	"serial": {
+		"baud": 115200,
+		"port": "/dev/ttyUSB0"
+	},
+	"pidfile": "./drinkomator.pid"
+}
