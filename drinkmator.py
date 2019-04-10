@@ -1,18 +1,21 @@
+#!/usr/bin/env python
+# coding: utf8
+
 """
 This is the "drinkomator" programm
 you can use this for buy coffee or waterbutle
 """
 
 import time
-from time import sleep
+import os
+import sys
 import threading
 import serial
 import RPi.GPIO as GPIO
 import stepmotor
+import json
 
-
-
-#GPIO  vars ####################################
+##GPIO  vars ####################################
 A =  7              #GPIO 4  pin a for stepmotor
 B = 11              #GPIO 17 in 2 for stepmotor
 C = 13              #GPIO 27 in 3 for stepmotor
@@ -23,9 +26,6 @@ BUTTON_COFFE = 33   #GPIO 13 for coffe button
 LED_COFFE    = 37   #GPIO 26 for coffe led
 RELAY_COFFEE = 40   #GPIO 21 for 5v relay
 ISCOIN       = 16   #GPIO 25 for coin inserter
-
-#E = 16
-#F = 18
 
 #GPIO init settings ############################
 GPIO.setmode(GPIO.BOARD)
@@ -41,6 +41,7 @@ GPIO.output(LED_COFFE, GPIO.LOW)
 GPIO.setup(ISCOIN, GPIO.IN)
 
 # Programlogic vars ############################
+confFile = 'drinkmator.conf.json'
 
 ### using internal gpio
 start = 1
@@ -59,9 +60,23 @@ updateDebounceDelay = 500
 
 ##serial connection
 connected = False
-port='/dev/serial/by-id/usb-1a86_USB2.0-Serial-if00-port0' #select the serial port here
-baud=115200 #baud is defined on arduino firmware
+pid=''
+port=''
+baud=0
 
+#LIB STUFF
+def set_exit_handler(func):
+    if os.name == "nt":
+        try:
+            import win32api
+            win32api.SetConsoleCtrlHandler(func, True)
+        except ImportError:
+            version = '.'.join(map(str, sys.version_info[:2]))
+            raise Exception('pywin32 not installed for Python ' + version)
+    else:
+        import signal
+        signal.signal(signal.SIGTERM, func)
+        
 #MAINLOGIK #####################################
 def RUN_WATER_OUT():
     print(".....bottle output run")
@@ -98,7 +113,7 @@ def READ_FROM_PORT(ser):
         #serin = ser.read()
         #connected = True
     while True:
-        sleep(1)
+        time.sleep(1)
         #reading = ser.readline().decode()
         getVal = ser.readline().decode().replace("\r", "")
         SERIAL_HANDLE(getVal)
@@ -147,51 +162,61 @@ def ISCOIN_TRIGGER(cannel):
           updateDebounceTime = time.time(); # Update last time we processed a signal
           update = 0; # Time to send a update now?
           lastState = state; # Update last state
-       
+          
+def on_exit(sig, func=None):
+    GPIO.cleanup()       # clean up GPIO on CTRL+C or exit
+    print("\nBye bye")
+    time.sleep(5)      
     
 #MAIN #########################
-
-#stepmotor.DEMO_RUN()
-print('Welcome to drinkmator')
-try:
-    serialCoin = serial.Serial(port, baud)
-    thread = threading.Thread(target=READ_FROM_PORT, args=(serialCoin,))
-    thread.start()
-    #stepmotor.DEMO_RUN()
-    #GPIO.add_event_detect(ISCOIN, GPIO.RISING, callback=ISCOIN_TRIGGER)#, bouncetime=updateDebounceDelay)
-    while True: #main loop
-        if(geld>=20):
-            if (waterLedState==False):
-                print("Water Bottle can out");
-                waterLedState=True
-                GPIO.output(LED_WATER, GPIO.HIGH)
-            if (GPIO.input(BUTTON_WATER)==False):
-                geld=geld-20
-                RUN_WATER_OUT()
-            if (geld >= 30):
-                if (coffeLedState==False):
-                    print("Coffe can out");
-                    coffeLedState=True
-                    GPIO.output(LED_COFFE, GPIO.HIGH)
-                if (GPIO.input(BUTTON_COFFE)==False):
-                    geld=geld-30
-                    RUN_COFFE_OUT();
-        time.sleep(.5)
-except Exception as exc:
-    GPIO.cleanup()
-    print("FEHLER")
-    print(exc)
-except KeyboardInterrupt:
-    GPIO.cleanup()       # clean up GPIO on CTRL+C exit
-    print("\nBye bye")
-    
-GPIO.cleanup()
-"""
-
-    taster = GPIO.input(BUTTON_COFFE)
-    time.sleep(0.010) #entprellen
-    if(taster == False):
-        print("Button is pressed")
-        RUN_DRINK_OUT()
+if __name__ == "__main__":
+    set_exit_handler(on_exit)
+    if os.path.isfile(confFile):
+        with open(confFile) as f:
+            try:
+                data = json.load(f)
+                port=data['serial']['port']
+                baud=data['serial']['baud']
+                pid=data["pidfile"]       
+            except Exception as exc:
+                print("ERRORR wrong json format:")
+                print(exc)
+            
+    if(pid==''):  pid='drinkomator.pid'
+    if(port==''): port='/dev/ttyUSB0' #select the fallback serial port here
+    if(baud==0):  baud=115200 # default baud is defined on arduino firmware
         
-"""
+    #stepmotor.DEMO_RUN()
+    print('Welcome to drinkmator')
+    try:
+        serialCoin = serial.Serial(port, baud)
+        thread = threading.Thread(target=READ_FROM_PORT, args=(serialCoin,))
+        thread.start()
+        #stepmotor.DEMO_RUN()
+        #GPIO.add_event_detect(ISCOIN, GPIO.RISING, callback=ISCOIN_TRIGGER)#, bouncetime=updateDebounceDelay)
+        while True: #main loop
+            if(geld>=20):
+                if (waterLedState==False):
+                    print("Water Bottle can out");
+                    waterLedState=True
+                    GPIO.output(LED_WATER, GPIO.HIGH)
+                if (GPIO.input(BUTTON_WATER)==False):
+                    geld=geld-20
+                    RUN_WATER_OUT()
+                if (geld >= 30):
+                    if (coffeLedState==False):
+                        print("Coffe can out");
+                        coffeLedState=True
+                        GPIO.output(LED_COFFE, GPIO.HIGH)
+                    if (GPIO.input(BUTTON_COFFE)==False):
+                        geld=geld-30
+                        RUN_COFFE_OUT();
+            time.sleep(.5)
+    except Exception as exc:
+        on_exit(1)
+        print("FEHLER")
+        print(exc)
+    except KeyboardInterrupt:
+        on_exit(1)
+        
+    GPIO.cleanup()
